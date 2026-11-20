@@ -1,0 +1,159 @@
+name: Build PonWrt for Nokia XG-040G-MD
+run-name: "XG-040G-MD custom firmware (AN7581)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ponwrt-xg-040g-md
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build XG-040G-MD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free build space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk \
+            gettext git g++-multilib gcc-multilib gperf help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev lld llvm ninja-build p7zip-full patch pkgconf \
+            python3 python3-docutils python3-pip python3-ply python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs unzip wget xmlto xxd zlib1g-dev zstd
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: ponwrt-dl-xg040gmd-${{ hashFiles('feeds.conf.default', 'configs/an7581.config', 'configs/release.config') }}
+          restore-keys: |
+            ponwrt-dl-xg040gmd-
+            ponwrt-dl-an7581-
+
+      - name: Install feeds
+        run: |
+          ./scripts/feeds update -a || (sleep 15 && ./scripts/feeds update -a)
+          ./scripts/feeds install -a
+
+      - name: Configure (XG-040G-MD only + requested packages)
+        run: |
+          ./scripts/kconfig.pl + configs/an7581.config configs/release.config > .config
+          python3 - <<'PY'
+          import re, subprocess, sys
+
+          CORE = [
+              "shunt", "dufs", "omcproxy",
+              "openvpn-openssl",
+              "ddns-scripts", "ddns-scripts-services",
+              "softethervpn5-server", "softethervpn5-client", "softethervpn5-bridge",
+              "luci-app-shunt", "luci-app-dufs", "luci-app-omcproxy",
+              "luci-app-openvpn-server", "luci-app-softethervpn",
+              "luci-app-ddns", "luci-app-filemanager",
+          ]
+          I18N = [
+              "luci-i18n-shunt-zh-cn",
+              "luci-i18n-dufs-zh-cn",
+              "luci-i18n-omcproxy-zh-cn",
+              "luci-i18n-openvpn-server-zh-cn",
+              "luci-i18n-softethervpn-zh-cn",
+              "luci-i18n-ddns-zh-cn",
+              "luci-i18n-filemanager-zh-cn",
+          ]
+          KEEP = "nokia_xg-040g-md-ubi"
+          CFG = ".config"
+
+          def apply(wanted):
+              lines = open(CFG, encoding="utf-8").read().splitlines()
+              out, seen = [], set()
+              for line in lines:
+                  m = re.match(r"^# CONFIG_PACKAGE_(.+) is not set$", line)
+                  m2 = re.match(r"^CONFIG_PACKAGE_(.+)=[ym]$", line)
+                  if (m and m.group(1) in wanted) or (m2 and m2.group(1) in wanted):
+                      name = m.group(1) if m else m2.group(1)
+                      out.append("CONFIG_PACKAGE_%s=y" % name)
+                      seen.add(name)
+                      continue
+                  if line.startswith("CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_") and line.endswith("=y"):
+                      if KEEP not in line:
+                          out.append("# " + line[:-2] + " is not set")
+                          continue
+                  out.append(line)
+              for p in wanted:
+                  if p not in seen:
+                      out.append("CONFIG_PACKAGE_%s=y" % p)
+              open(CFG, "w", encoding="utf-8").write("\n".join(out) + "\n")
+
+          # Stage 1: enable core packages, let kconfig materialise the i18n symbols
+          apply(CORE)
+          subprocess.run(["make", "defconfig"], check=True)
+          # Stage 2: enable the Chinese translation packages
+          apply(I18N)
+          subprocess.run(["make", "defconfig"], check=True)
+
+          enabled = set()
+          for line in open(CFG, encoding="utf-8"):
+              line = line.rstrip()
+              if line.startswith("CONFIG_PACKAGE_") and line.endswith("=y"):
+                  enabled.add(line[len("CONFIG_PACKAGE_"):-2])
+          miss_core = [p for p in CORE if p not in enabled]
+          miss_i18n = [p for p in I18N if p not in enabled]
+          print("Core packages: %d/%d enabled" % (len(CORE) - len(miss_core), len(CORE)))
+          print("Chinese i18n : %d/%d enabled" % (len(I18N) - len(miss_i18n), len(I18N)))
+          if miss_i18n:
+              print("::warning::i18n packages not available: " + ", ".join(miss_i18n))
+          if miss_core:
+              print("::error::core packages not available: " + ", ".join(miss_core))
+              sys.exit(1)
+          with open("requested-packages.txt", "w", encoding="utf-8") as f:
+              f.write("\n".join(CORE + I18N) + "\n")
+          PY
+          echo "--- enabled device profiles ---"
+          grep -E '^CONFIG_TARGET.*DEVICE.*=y' .config || true
+
+      - name: Download sources
+        run: |
+          make download -j"$(nproc)" || make download -j1
+
+      - name: Build
+        run: |
+          make -j"$(nproc)"
+
+      - name: Collect firmware
+        run: |
+          mkdir -p release
+          find bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -name '*nokia_xg-040g-md-ubi*' -o -name 'sha256sums' -o -name 'profiles.json' \) \
+            -exec cp {} release/ \;
+          cp requested-packages.txt release/build-packages.txt
+          ls -lh release/
+          test -n "$(ls -A release)"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponwrt-xg-040g-md
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
