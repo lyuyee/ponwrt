@@ -64,22 +64,17 @@ jobs:
           import re, subprocess, sys
 
           CORE = [
-              "shunt", "dufs", "omcproxy",
-              "ddns-scripts", "ddns-scripts-services",
-              "openvpn-openssl",
-              "rtp2httpd",
-              "luci-app-shunt", "luci-app-dufs", "luci-app-omcproxy",
-              "luci-app-ddns", "luci-app-filemanager",
-              "luci-app-openvpn-server", "luci-app-rtp2httpd",
+              "shunt", "luci-app-shunt", "dufs",
+              "luci-app-dufs", "omcproxy", "luci-app-omcproxy",
+              "ddns-scripts", "ddns-scripts-services", "luci-app-ddns",
+              "luci-app-filemanager", "softethervpn5-server", "softethervpn5-client",
+              "softethervpn5-bridge", "luci-app-softethervpn", "rtp2httpd",
+              "luci-app-rtp2httpd"
           ]
           I18N = [
-              "luci-i18n-shunt-zh-cn",
-              "luci-i18n-dufs-zh-cn",
-              "luci-i18n-omcproxy-zh-cn",
-              "luci-i18n-ddns-zh-cn",
-              "luci-i18n-filemanager-zh-cn",
-              "luci-i18n-openvpn-server-zh-cn",
-              "luci-i18n-rtp2httpd-zh-cn",
+              "luci-i18n-shunt-zh-cn", "luci-i18n-dufs-zh-cn", "luci-i18n-omcproxy-zh-cn",
+              "luci-i18n-ddns-zh-cn", "luci-i18n-filemanager-zh-cn", "luci-i18n-softethervpn-zh-cn",
+              "luci-i18n-rtp2httpd-zh-cn"
           ]
           KEEP = "nokia_xg-040g-md-ubi"
           CFG = ".config"
